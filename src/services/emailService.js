@@ -64,9 +64,12 @@ class EmailService {
           },
           tls: {
             rejectUnauthorized: env.NODE_ENV === 'production'
-          }
+          },
+          connectionTimeout: 10000,
+          greetingTimeout: 10000,
+          socketTimeout: 15000
         });
-        logger.info(`[EmailService] Configured SMTP transporter for host ${env.SMTP_HOST}:${env.SMTP_PORT}`);
+        logger.info(`[EmailService] Configured SMTP transporter for host ${env.SMTP_HOST}:${env.SMTP_PORT} (secure: ${env.SMTP_SECURE})`);
       } catch (err) {
         logger.error(`[EmailService] Error initializing SMTP transporter: ${err.message}. Defaulting to mock mode.`);
         this.transporter = null;
