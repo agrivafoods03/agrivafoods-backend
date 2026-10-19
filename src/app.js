@@ -19,6 +19,9 @@ if (!fs.existsSync(uploadsDir)) {
 
 const app = express();
 
+// Trust first proxy hop from Nginx reverse proxy
+app.set('trust proxy', 1);
+
 // Security HTTP headers with cross-origin resource policy for media/images
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }

@@ -24,4 +24,7 @@ export const env = {
   SMTP_PASS: process.env.SMTP_PASS || '',
   SMTP_FROM_EMAIL: process.env.SMTP_FROM_EMAIL || 'notifications@agrivafoods.com',
   SMTP_SECURE: smtpSecure,
+  AWS_REGION: process.env.AWS_REGION || 'ap-southeast-2',
+  S3_BUCKET_NAME: process.env.S3_BUCKET_NAME || '',
+  CLOUDFRONT_URL: process.env.CLOUDFRONT_URL || '',
 };
