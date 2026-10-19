@@ -28,11 +28,18 @@ app.use(helmet({
 }));
 
 // CORS Configuration
+const clientUrls = (env.CLIENT_URL || '')
+  .split(',')
+  .map(u => u.trim())
+  .filter(Boolean);
+
 const allowedOrigins = [
-  env.CLIENT_URL,
+  ...clientUrls,
   'http://localhost:5173',
   'http://localhost:3000',
-  'http://127.0.0.1:5173'
+  'http://127.0.0.1:5173',
+  'http://3.107.118.124',
+  'https://3.107.118.124'
 ]
   .filter(Boolean)
   .map(url => url.trim().replace(/\/$/, ''));
@@ -45,7 +52,11 @@ app.use(
       if (
         allowedOrigins.includes(cleanOrigin) ||
         allowedOrigins.includes('*') ||
-        cleanOrigin.endsWith('.netlify.app')
+        cleanOrigin.endsWith('.netlify.app') ||
+        cleanOrigin.includes('agrivafood.in') ||
+        cleanOrigin.includes('agrivafoods.com') ||
+        cleanOrigin === 'http://3.107.118.124' ||
+        cleanOrigin === 'https://3.107.118.124'
       ) {
         callback(null, true);
       } else {
