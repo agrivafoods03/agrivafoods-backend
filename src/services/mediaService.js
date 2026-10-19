@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
 import { memoryStore } from '../utils/memoryStore.js';
 import { ApiError } from '../utils/ApiError.js';
 import { env } from '../config/env.js';
@@ -34,7 +34,7 @@ export class MediaService {
             const ext = path.extname(filename).replace('.', '').toLowerCase();
             const fileUrl = env.CLOUDFRONT_URL
               ? `${env.CLOUDFRONT_URL.replace(/\/$/, '')}/${key}`
-              : `https://${env.S3_BUCKET_NAME}.s3.${env.AWS_REGION}.amazonaws.com/${key}`;
+              : `/api/media/file/${key}`;
 
             return {
               _id: `s3_${key.replace(/[^a-zA-Z0-9]/g, '_')}`,
@@ -100,7 +100,7 @@ export class MediaService {
         if (env.CLOUDFRONT_URL) {
           fileUrl = `${env.CLOUDFRONT_URL.replace(/\/$/, '')}/${s3Key}`;
         } else {
-          fileUrl = `https://${env.S3_BUCKET_NAME}.s3.${env.AWS_REGION}.amazonaws.com/${s3Key}`;
+          fileUrl = `/api/media/file/${s3Key}`;
         }
         isS3 = true;
         logger.info(`[MediaService] Uploaded file to S3: ${s3Key} (${fileUrl})`);
@@ -131,6 +131,41 @@ export class MediaService {
     };
     memoryStore.media.unshift(mediaItem);
     return mediaItem;
+  }
+
+  static async getMediaStream(key) {
+    const cleanKey = key.replace(/^\/+/, '');
+    const s3Key = cleanKey.startsWith('products/') ? cleanKey : `products/${cleanKey}`;
+
+    if (env.S3_BUCKET_NAME) {
+      try {
+        const command = new GetObjectCommand({
+          Bucket: env.S3_BUCKET_NAME,
+          Key: s3Key
+        });
+        const response = await s3Client.send(command);
+        return {
+          stream: response.Body,
+          contentType: response.ContentType || 'image/jpeg',
+          contentLength: response.ContentLength
+        };
+      } catch (err) {
+        logger.warn(`[MediaService] S3 getObject failed for ${s3Key}: ${err.message}`);
+      }
+    }
+
+    // Disk fallback
+    const localFile = path.join(uploadDir, path.basename(cleanKey));
+    if (fs.existsSync(localFile)) {
+      const ext = path.extname(localFile).replace('.', '').toLowerCase();
+      return {
+        stream: fs.createReadStream(localFile),
+        contentType: ext === 'svg' ? 'image/svg+xml' : `image/${ext || 'jpeg'}`,
+        contentLength: fs.statSync(localFile).size
+      };
+    }
+
+    throw new ApiError(404, `Image not found: ${cleanKey}`);
   }
 
   static async deleteMedia(filename) {

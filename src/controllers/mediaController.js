@@ -26,3 +26,16 @@ export const deleteMedia = asyncHandler(async (req, res) => {
   const result = await MediaService.deleteMedia(req.params.filename);
   return ApiResponse.success(res, result, 'Image deleted successfully');
 });
+
+export const streamMedia = asyncHandler(async (req, res) => {
+  const key = req.params[0] || req.params.key;
+  if (!key) {
+    throw new ApiError(400, 'Image key is required');
+  }
+
+  const { stream, contentType, contentLength } = await MediaService.getMediaStream(key);
+  res.setHeader('Content-Type', contentType);
+  if (contentLength) res.setHeader('Content-Length', contentLength);
+  res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+  stream.pipe(res);
+});

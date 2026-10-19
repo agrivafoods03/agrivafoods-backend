@@ -1,9 +1,12 @@
 import { Router } from 'express';
-import { getAllMedia, uploadMedia, deleteMedia } from '../controllers/mediaController.js';
+import { getAllMedia, uploadMedia, deleteMedia, streamMedia } from '../controllers/mediaController.js';
 import { upload } from '../middlewares/uploadMiddleware.js';
 import { authenticate, authorize } from '../middlewares/authMiddleware.js';
 
 const router = Router();
+
+// Public media streaming route (no auth required for browser <img> tags)
+router.get('/file/*', streamMedia);
 
 // Upload single or multiple images
 router.post('/upload', authenticate, authorize('admin'), upload.array('images', 10), uploadMedia);
