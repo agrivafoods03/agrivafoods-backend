@@ -230,13 +230,13 @@ class EmailService {
    * Asynchronous, non-blocking email delivery engine
    * Never throws error to caller, safely logs and tracks results.
    */
-  async sendAdminEmail({ subject, html, text }) {
-    const to = env.ADMIN_NOTIFICATION_EMAIL || 'admin@agrivafoods.com';
+  async sendAdminEmail({ to, subject, html, text }) {
+    const targetRecipient = to || env.ADMIN_NOTIFICATION_EMAIL || 'admin@agrivafoods.com';
     const from = env.SMTP_FROM_EMAIL || 'notifications@agrivafoods.com';
 
     const mailOptions = {
       from: `"AgrivaFoods Notifications" <${from}>`,
-      to,
+      to: targetRecipient,
       subject,
       text,
       html
@@ -245,7 +245,7 @@ class EmailService {
     // Store in internal memory history for testing / diagnostics
     const record = {
       id: `mail_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      to,
+      to: targetRecipient,
       from,
       subject,
       text,
@@ -257,16 +257,111 @@ class EmailService {
     try {
       if (this.transporter) {
         const info = await this.transporter.sendMail(mailOptions);
-        logger.info(`[EmailService] Admin email sent successfully: "${subject}" to ${to} (MessageId: ${info.messageId})`);
+        logger.info(`[EmailService] Admin email sent successfully: "${subject}" to ${targetRecipient} (MessageId: ${info.messageId})`);
         return { success: true, messageId: info.messageId, mode: 'smtp' };
       } else {
-        logger.info(`[EmailService] [Mock Mode] Admin email recorded: "${subject}" to ${to}`);
+        logger.info(`[EmailService] [Mock Mode] Admin email recorded: "${subject}" to ${targetRecipient}`);
         return { success: true, messageId: record.id, mode: 'mock' };
       }
     } catch (err) {
       logger.error(`[EmailService] Failed to deliver admin email "${subject}": ${err.message}`);
       return { success: false, error: err.message };
     }
+  }
+
+  // =========================================================================
+  // ADMIN PASSWORD RESET OTP NOTIFICATION
+  // =========================================================================
+  async sendAdminPasswordResetOtpEmail({ to, otp, expiresInMinutes = 10 }) {
+    const title = 'Administrator Password Reset Code';
+    const subtitle = 'One-time verification code for AgrivaFoods Admin Portal';
+    const badgeText = 'Security OTP';
+    const badgeColor = '#b45309';
+
+    const contentHtml = `
+      <div style="background-color: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 18px; margin-bottom: 24px;">
+        <p style="margin: 0 0 10px 0; font-size: 14px; color: #92400e; font-weight: 600;">
+          Administrator Password Reset Request
+        </p>
+        <p style="margin: 0; font-size: 13px; color: #78350f;">
+          We received a request to reset your administrator password for the <strong>AgrivaFoods Admin Portal</strong>. Use the 6-digit verification code below to proceed. This code expires in <strong>${expiresInMinutes} minutes</strong>.
+        </p>
+      </div>
+
+      <div style="text-align: center; margin: 32px 0; padding: 24px 16px; background-color: #f9fafb; border: 2px dashed #009447; border-radius: 12px;">
+        <span style="font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #6b7280; font-weight: 700; display: block; margin-bottom: 10px;">
+          One-Time Verification Code (OTP)
+        </span>
+        <span style="font-family: 'SF Mono', Consolas, Monaco, monospace; font-size: 38px; font-weight: 900; color: #18382A; letter-spacing: 12px; display: inline-block;">
+          ${escapeHtml(otp)}
+        </span>
+      </div>
+
+      <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 12px 16px; border-radius: 4px; font-size: 13px; color: #7f1d1d; margin-top: 24px;">
+        <strong>Security Notice:</strong> If you did not request this password reset, please ignore this email. Your current administrator password remains unchanged and protected. Never disclose this code to anyone.
+      </div>
+    `;
+
+    const html = this.renderEmailLayout({
+      badgeText,
+      badgeColor,
+      title,
+      subtitle,
+      contentHtml
+    });
+
+    const text = `AgrivaFoods Admin Password Reset Code: ${otp}\n\nThis 6-digit verification code expires in ${expiresInMinutes} minutes.\n\nIf you did not request this, please ignore this email.`;
+
+    return this.sendAdminEmail({
+      to,
+      subject: `[AgrivaFoods Security] Admin Password Reset Code: ${otp.substring(0, 3)}***`,
+      html,
+      text
+    });
+  }
+
+  // =========================================================================
+  // ADMIN PASSWORD CHANGED CONFIRMATION
+  // =========================================================================
+  async sendAdminPasswordChangedAlert({ to }) {
+    const title = 'Administrator Password Changed Successfully';
+    const subtitle = 'Security confirmation alert for AgrivaFoods Admin Portal';
+    const badgeText = 'Security Alert';
+    const badgeColor = '#009447';
+
+    const contentHtml = `
+      <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 18px; margin-bottom: 24px;">
+        <p style="margin: 0 0 10px 0; font-size: 14px; color: #166534; font-weight: 600;">
+          Your administrator password has been updated.
+        </p>
+        <p style="margin: 0; font-size: 13px; color: #15803d;">
+          You can now sign in to the AgrivaFoods Admin Dashboard with your new password. All prior reset verification codes have been invalidated.
+        </p>
+      </div>
+
+      <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 12px 16px; border-radius: 4px; font-size: 13px; color: #7f1d1d;">
+        <strong>Important:</strong> If you did not perform this password change, your account may be compromised. Please contact technical support immediately.
+      </div>
+    `;
+
+    const html = this.renderEmailLayout({
+      badgeText,
+      badgeColor,
+      title,
+      subtitle,
+      contentHtml,
+      ctaText: 'Sign In to Admin Portal',
+      ctaUrl: '/admin/login'
+    });
+
+    const text = `AgrivaFoods Admin Password Changed Successfully.\n\nIf you did not perform this change, contact support immediately.`;
+
+    return this.sendAdminEmail({
+      to,
+      subject: `[AgrivaFoods Security] Admin Password Changed Successfully`,
+      html,
+      text
+    });
   }
 
   // =========================================================================

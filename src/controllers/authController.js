@@ -28,3 +28,22 @@ export const changePassword = asyncHandler(async (req, res) => {
 export const logout = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, null, 'Logged out successfully');
 });
+
+export const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const result = await AuthService.forgotPassword({ email });
+  return ApiResponse.success(res, result, result.message);
+});
+
+export const verifyResetOtp = asyncHandler(async (req, res) => {
+  const { email, otp } = req.body;
+  const result = await AuthService.verifyResetOtp({ email, otp });
+  return ApiResponse.success(res, result, result.message);
+});
+
+export const resetPassword = asyncHandler(async (req, res) => {
+  const { email, resetToken, newPassword, confirmPassword } = req.body;
+  const result = await AuthService.resetPassword({ email, resetToken, newPassword, confirmPassword });
+  return ApiResponse.success(res, result, result.message);
+});
+

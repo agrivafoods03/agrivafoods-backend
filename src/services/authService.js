@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { User } from '../models/User.js';
 import { env } from '../config/env.js';
 import { checkDbConnection } from '../config/db.js';
@@ -181,4 +182,228 @@ export class AuthService {
       return { success: true, message: 'Password updated successfully' };
     }
   }
+
+  static async forgotPassword({ email }) {
+    if (!email || !email.includes('@')) {
+      throw new ApiError(400, 'Please provide a valid administrator email address.');
+    }
+    const normalizedEmail = email.toLowerCase().trim();
+
+    let admin = null;
+    if (checkDbConnection()) {
+      admin = await User.findOne({ email: normalizedEmail, role: 'admin' });
+      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+        admin = await User.findOne({ role: 'admin' });
+      }
+    } else {
+      admin = memoryStore.users.find(u => u.email === normalizedEmail && u.role === 'admin');
+      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+        admin = memoryStore.users.find(u => u.role === 'admin');
+      }
+    }
+
+    // Generic response if account is not found or inactive to prevent account enumeration
+    if (!admin || admin.isActive === false) {
+      return {
+        message: 'If an eligible administrator account exists, a verification code will be sent.'
+      };
+    }
+
+    // Cooldown protection: minimum 60 seconds between OTP requests
+    if (admin.resetPasswordLastRequested) {
+      const elapsedMs = Date.now() - new Date(admin.resetPasswordLastRequested).getTime();
+      if (elapsedMs < 60 * 1000) {
+        const remainingSec = Math.ceil((60 * 1000 - elapsedMs) / 1000);
+        throw new ApiError(429, `Please wait ${remainingSec} seconds before requesting a new verification code.`);
+      }
+    }
+
+    // Generate cryptographically secure 6-digit OTP
+    const rawOtp = String(crypto.randomInt(100000, 1000000));
+    const otpHash = crypto.createHash('sha256').update(rawOtp).digest('hex');
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    admin.resetPasswordOtpHash = otpHash;
+    admin.resetPasswordOtpExpires = expiresAt;
+    admin.resetPasswordOtpAttempts = 0;
+    admin.resetPasswordLastRequested = new Date();
+    admin.resetPasswordToken = null;
+    admin.resetPasswordTokenExpires = null;
+
+    if (checkDbConnection()) {
+      await admin.save();
+    }
+
+    // Deliver email via Nodemailer
+    const deliveryTarget = (admin.email && !admin.email.endsWith('@agrivafoods.com'))
+      ? admin.email
+      : (env.ADMIN_NOTIFICATION_EMAIL || admin.email);
+
+    await emailService.sendAdminPasswordResetOtpEmail({
+      to: deliveryTarget,
+      otp: rawOtp,
+      expiresInMinutes: 10
+    });
+
+    return {
+      message: 'If an eligible administrator account exists, a verification code will be sent.'
+    };
+  }
+
+  static async verifyResetOtp({ email, otp }) {
+    if (!email || !otp) {
+      throw new ApiError(400, 'Both email and 6-digit verification code are required.');
+    }
+    const cleanOtp = String(otp).trim();
+    if (!/^\d{6}$/.test(cleanOtp)) {
+      throw new ApiError(400, 'Verification code must be exactly 6 digits.');
+    }
+    const normalizedEmail = email.toLowerCase().trim();
+
+    let admin = null;
+    if (checkDbConnection()) {
+      admin = await User.findOne({ email: normalizedEmail, role: 'admin' });
+      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+        admin = await User.findOne({ role: 'admin' });
+      }
+    } else {
+      admin = memoryStore.users.find(u => u.email === normalizedEmail && u.role === 'admin');
+      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+        admin = memoryStore.users.find(u => u.role === 'admin');
+      }
+    }
+
+    if (!admin || !admin.resetPasswordOtpHash || !admin.resetPasswordOtpExpires) {
+      throw new ApiError(400, 'Invalid or expired verification code. Please request a new code.');
+    }
+
+    // Expiration check
+    if (Date.now() > new Date(admin.resetPasswordOtpExpires).getTime()) {
+      admin.resetPasswordOtpHash = null;
+      admin.resetPasswordOtpExpires = null;
+      admin.resetPasswordOtpAttempts = 0;
+      if (checkDbConnection()) await admin.save();
+      throw new ApiError(400, 'Verification code has expired. Please request a new code.');
+    }
+
+    // Attempt limits check (max 5)
+    if (admin.resetPasswordOtpAttempts >= 5) {
+      admin.resetPasswordOtpHash = null;
+      admin.resetPasswordOtpExpires = null;
+      admin.resetPasswordOtpAttempts = 0;
+      if (checkDbConnection()) await admin.save();
+      throw new ApiError(429, 'Too many invalid attempts. This verification code has been invalidated. Please request a new code.');
+    }
+
+    // Verify OTP hash
+    const candidateHash = crypto.createHash('sha256').update(cleanOtp).digest('hex');
+    if (candidateHash !== admin.resetPasswordOtpHash) {
+      admin.resetPasswordOtpAttempts = (admin.resetPasswordOtpAttempts || 0) + 1;
+      if (admin.resetPasswordOtpAttempts >= 5) {
+        admin.resetPasswordOtpHash = null;
+        admin.resetPasswordOtpExpires = null;
+        admin.resetPasswordOtpAttempts = 0;
+        if (checkDbConnection()) await admin.save();
+        throw new ApiError(429, 'Too many invalid attempts. This verification code has been invalidated. Please request a new code.');
+      }
+      if (checkDbConnection()) await admin.save();
+      const remaining = 5 - admin.resetPasswordOtpAttempts;
+      throw new ApiError(400, `Invalid verification code. ${remaining} attempt(s) remaining.`);
+    }
+
+    // OTP matched: Generate single-use resetToken
+    const rawResetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto.createHash('sha256').update(rawResetToken).digest('hex');
+
+    admin.resetPasswordToken = resetTokenHash;
+    admin.resetPasswordTokenExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    // Invalidate the OTP immediately so it cannot be reused
+    admin.resetPasswordOtpHash = null;
+    admin.resetPasswordOtpExpires = null;
+    admin.resetPasswordOtpAttempts = 0;
+
+    if (checkDbConnection()) {
+      await admin.save();
+    }
+
+    return {
+      resetToken: rawResetToken,
+      message: 'Verification code confirmed. You may now set your new password.'
+    };
+  }
+
+  static async resetPassword({ email, resetToken, newPassword, confirmPassword }) {
+    if (!email || !resetToken || !newPassword) {
+      throw new ApiError(400, 'Email, reset token, and new password are required.');
+    }
+    if (newPassword !== confirmPassword) {
+      throw new ApiError(400, 'New passwords do not match.');
+    }
+    if (newPassword.length < 8) {
+      throw new ApiError(400, 'Password must be at least 8 characters in length.');
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    let admin = null;
+    if (checkDbConnection()) {
+      admin = await User.findOne({ email: normalizedEmail, role: 'admin' }).select('+password');
+      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+        admin = await User.findOne({ role: 'admin' }).select('+password');
+      }
+    } else {
+      admin = memoryStore.users.find(u => u.email === normalizedEmail && u.role === 'admin');
+      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+        admin = memoryStore.users.find(u => u.role === 'admin');
+      }
+    }
+
+    if (!admin || !admin.resetPasswordToken || !admin.resetPasswordTokenExpires) {
+      throw new ApiError(400, 'Reset token has expired or is invalid. Please request a new verification code.');
+    }
+
+    if (Date.now() > new Date(admin.resetPasswordTokenExpires).getTime()) {
+      admin.resetPasswordToken = null;
+      admin.resetPasswordTokenExpires = null;
+      if (checkDbConnection()) await admin.save();
+      throw new ApiError(400, 'Reset token has expired. Please request a new verification code.');
+    }
+
+    const candidateTokenHash = crypto.createHash('sha256').update(String(resetToken).trim()).digest('hex');
+    if (candidateTokenHash !== admin.resetPasswordToken) {
+      throw new ApiError(400, 'Invalid reset token.');
+    }
+
+    // Set new password (bcrypt via pre-save hook in mongoose, or manual bcrypt in memoryStore)
+    if (checkDbConnection()) {
+      admin.password = newPassword;
+      admin.resetPasswordToken = null;
+      admin.resetPasswordTokenExpires = null;
+      admin.resetPasswordOtpHash = null;
+      admin.resetPasswordOtpExpires = null;
+      admin.resetPasswordOtpAttempts = 0;
+      await admin.save();
+    } else {
+      admin.password = await bcrypt.hash(newPassword, 10);
+      admin.resetPasswordToken = null;
+      admin.resetPasswordTokenExpires = null;
+      admin.resetPasswordOtpHash = null;
+      admin.resetPasswordOtpExpires = null;
+      admin.resetPasswordOtpAttempts = 0;
+    }
+
+    // Send security alert
+    const deliveryTarget = (admin.email && !admin.email.endsWith('@agrivafoods.com'))
+      ? admin.email
+      : (env.ADMIN_NOTIFICATION_EMAIL || admin.email);
+
+    emailService.sendAdminPasswordChangedAlert({ to: deliveryTarget }).catch(err => {
+      logger.error(`[AuthService] Failed to send password changed alert: ${err.message}`);
+    });
+
+    return {
+      message: 'Administrator password has been reset successfully. Please sign in with your new password.'
+    };
+  }
 }
+

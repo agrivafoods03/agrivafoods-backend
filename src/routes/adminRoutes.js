@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authMiddleware.js';
-import { login, logout, getMe } from '../controllers/authController.js';
+import { login, logout, getMe, forgotPassword, verifyResetOtp, resetPassword } from '../controllers/authController.js';
 import { getStats } from '../controllers/dashboardController.js';
 import {
   getAdminProducts,
@@ -38,18 +38,21 @@ import {
   updateOrderStatus
 } from '../controllers/orderController.js';
 import { upload } from '../middlewares/uploadMiddleware.js';
-import { authLimiter } from '../middlewares/rateLimiter.js';
-import { validateBody } from '../middlewares/validateMiddleware.js';
+import { authLimiter, otpLimiter } from '../middlewares/rateLimiter.js';
+import { validateBody, validateEmail } from '../middlewares/validateMiddleware.js';
 import { emailService } from '../services/emailService.js';
 import { env } from '../config/env.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 
 const router = Router();
 
-// 1. Admin Authentication
+// 1. Admin Authentication & Password Reset Flow
 router.post('/auth/login', authLimiter, validateBody(['email', 'password']), login);
 router.post('/auth/logout', authenticate, authorize('admin'), logout);
 router.get('/auth/me', authenticate, authorize('admin'), getMe);
+router.post('/auth/forgot-password', otpLimiter, validateBody(['email']), validateEmail('email'), forgotPassword);
+router.post('/auth/verify-otp', otpLimiter, validateBody(['email', 'otp']), verifyResetOtp);
+router.post('/auth/reset-password', otpLimiter, validateBody(['email', 'resetToken', 'newPassword', 'confirmPassword']), resetPassword);
 
 // 2. Admin Dashboard Overview
 router.get('/dashboard', authenticate, authorize('admin'), getStats);
