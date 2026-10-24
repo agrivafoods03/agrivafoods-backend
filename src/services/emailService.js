@@ -143,7 +143,7 @@ class EmailService {
   renderEmailLayout({ badgeText, badgeColor = '#15803d', title, subtitle, contentHtml, ctaText, ctaUrl }) {
     const adminEmail = escapeHtml(env.ADMIN_NOTIFICATION_EMAIL);
     const clientUrl = env.CLIENT_URL || 'http://localhost:5173';
-    const resolvedCtaUrl = ctaUrl.startsWith('http') ? ctaUrl : `${clientUrl}${ctaUrl}`;
+    const resolvedCtaUrl = ctaUrl ? (ctaUrl.startsWith('http') ? ctaUrl : `${clientUrl}${ctaUrl}`) : null;
 
     return `
 <!DOCTYPE html>
