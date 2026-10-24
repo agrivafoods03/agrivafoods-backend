@@ -14,7 +14,21 @@ const server = app.listen(PORT, async () => {
   logger.info(`===============================================`);
 
   // Attempt MongoDB connection in background (non-blocking)
-  await connectDB();
+  const conn = await connectDB();
+  if (conn) {
+    try {
+      const { User } = await import('./models/User.js');
+      const targetAdminEmail = (env.ADMIN_NOTIFICATION_EMAIL || 'agrivafoods03@gmail.com').toLowerCase().trim();
+      const existingAdmin = await User.findOne({ role: 'admin' });
+      if (existingAdmin && existingAdmin.email !== targetAdminEmail) {
+        logger.info(`[Auth] Updating administrator account email to "${targetAdminEmail}" (was "${existingAdmin.email}")`);
+        existingAdmin.email = targetAdminEmail;
+        await existingAdmin.save();
+      }
+    } catch (err) {
+      logger.warn(`[Auth] Admin sync check skipped: ${err.message}`);
+    }
+  }
 });
 
 // Handle graceful shutdowns

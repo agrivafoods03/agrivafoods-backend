@@ -312,6 +312,18 @@ test('Admin Auth & Forgot Password / Reset OTP Suite', async (t) => {
     assert.equal(newLoginRes.body.success, true);
     assert.ok(newLoginRes.body.data.token);
     assert.equal(newLoginRes.body.data.user.role, 'admin');
+
+    // Also verify login with agrivafoods03@gmail.com succeeds
+    const gmailLoginRes = await makeRequest(server, {
+      method: 'POST',
+      path: '/api/auth/login',
+      body: {
+        email: 'agrivafoods03@gmail.com',
+        password: newAdminPassword
+      }
+    });
+    assert.equal(gmailLoginRes.status, 200);
+    assert.equal(gmailLoginRes.body.data.user.role, 'admin');
   });
 
   await t.test('14. Restore original admin password for continuous testing', async () => {

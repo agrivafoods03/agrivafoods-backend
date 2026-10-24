@@ -86,9 +86,17 @@ export class AuthService {
 
   static async login({ email, password }) {
     const normalizedEmail = email.toLowerCase().trim();
+    const isAdminEmailAlias = (
+      normalizedEmail === 'agrivafoods03@gmail.com' ||
+      normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim() ||
+      normalizedEmail === 'admin@agrivafoods.com'
+    );
 
     if (checkDbConnection()) {
-      const user = await User.findOne({ email: normalizedEmail }).select('+password');
+      let user = await User.findOne({ email: normalizedEmail }).select('+password');
+      if (!user && isAdminEmailAlias) {
+        user = await User.findOne({ role: 'admin' }).select('+password');
+      }
       if (!user) {
         throw new ApiError(401, 'Invalid email or password.');
       }
@@ -109,7 +117,10 @@ export class AuthService {
       return { user: userResponse, token };
     } else {
       // In-Memory Mode
-      const user = memoryStore.users.find(u => u.email === normalizedEmail);
+      let user = memoryStore.users.find(u => u.email === normalizedEmail);
+      if (!user && isAdminEmailAlias) {
+        user = memoryStore.users.find(u => u.role === 'admin');
+      }
       if (!user) {
         throw new ApiError(401, 'Invalid email or password.');
       }
@@ -188,16 +199,21 @@ export class AuthService {
       throw new ApiError(400, 'Please provide a valid administrator email address.');
     }
     const normalizedEmail = email.toLowerCase().trim();
+    const isAdminEmailAlias = (
+      normalizedEmail === 'agrivafoods03@gmail.com' ||
+      normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim() ||
+      normalizedEmail === 'admin@agrivafoods.com'
+    );
 
     let admin = null;
     if (checkDbConnection()) {
       admin = await User.findOne({ email: normalizedEmail, role: 'admin' });
-      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+      if (!admin && isAdminEmailAlias) {
         admin = await User.findOne({ role: 'admin' });
       }
     } else {
       admin = memoryStore.users.find(u => u.email === normalizedEmail && u.role === 'admin');
-      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+      if (!admin && isAdminEmailAlias) {
         admin = memoryStore.users.find(u => u.role === 'admin');
       }
     }
@@ -259,16 +275,21 @@ export class AuthService {
       throw new ApiError(400, 'Verification code must be exactly 6 digits.');
     }
     const normalizedEmail = email.toLowerCase().trim();
+    const isAdminEmailAlias = (
+      normalizedEmail === 'agrivafoods03@gmail.com' ||
+      normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim() ||
+      normalizedEmail === 'admin@agrivafoods.com'
+    );
 
     let admin = null;
     if (checkDbConnection()) {
       admin = await User.findOne({ email: normalizedEmail, role: 'admin' });
-      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+      if (!admin && isAdminEmailAlias) {
         admin = await User.findOne({ role: 'admin' });
       }
     } else {
       admin = memoryStore.users.find(u => u.email === normalizedEmail && u.role === 'admin');
-      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+      if (!admin && isAdminEmailAlias) {
         admin = memoryStore.users.find(u => u.role === 'admin');
       }
     }
@@ -344,16 +365,21 @@ export class AuthService {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
+    const isAdminEmailAlias = (
+      normalizedEmail === 'agrivafoods03@gmail.com' ||
+      normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim() ||
+      normalizedEmail === 'admin@agrivafoods.com'
+    );
 
     let admin = null;
     if (checkDbConnection()) {
       admin = await User.findOne({ email: normalizedEmail, role: 'admin' }).select('+password');
-      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+      if (!admin && isAdminEmailAlias) {
         admin = await User.findOne({ role: 'admin' }).select('+password');
       }
     } else {
       admin = memoryStore.users.find(u => u.email === normalizedEmail && u.role === 'admin');
-      if (!admin && normalizedEmail === (env.ADMIN_NOTIFICATION_EMAIL || '').toLowerCase().trim()) {
+      if (!admin && isAdminEmailAlias) {
         admin = memoryStore.users.find(u => u.role === 'admin');
       }
     }
@@ -382,6 +408,9 @@ export class AuthService {
       admin.resetPasswordOtpHash = null;
       admin.resetPasswordOtpExpires = null;
       admin.resetPasswordOtpAttempts = 0;
+      if (isAdminEmailAlias) {
+        admin.email = normalizedEmail;
+      }
       await admin.save();
     } else {
       admin.password = await bcrypt.hash(newPassword, 10);
@@ -390,6 +419,9 @@ export class AuthService {
       admin.resetPasswordOtpHash = null;
       admin.resetPasswordOtpExpires = null;
       admin.resetPasswordOtpAttempts = 0;
+      if (isAdminEmailAlias) {
+        admin.email = normalizedEmail;
+      }
     }
 
     // Send security alert
