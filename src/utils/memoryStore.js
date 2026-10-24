@@ -171,10 +171,10 @@ class MemoryStore {
           phone: '+91 98220 12345'
         },
         shippingAddress: {
-          street: 'Apt 12, Sunrise Residency, Baner Road',
+          street: 'Flat 101, Green Park Residency, Senapati Bapat Road',
           city: 'Pune',
           state: 'Maharashtra',
-          pincode: '411045'
+          pincode: '411016'
         },
         items: [
           {

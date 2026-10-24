@@ -35,8 +35,7 @@ const userSchema = new mongoose.Schema(
     },
     phone: {
       type: String,
-      trim: true,
-      default: '8830052087'
+      trim: true
     },
     password: {
       type: String,
