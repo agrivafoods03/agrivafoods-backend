@@ -1,4 +1,5 @@
 import { Order } from '../models/Order.js';
+import { Product } from '../models/Product.js';
 import { checkDbConnection } from '../config/db.js';
 import { memoryStore } from '../utils/memoryStore.js';
 import { ApiError } from '../utils/ApiError.js';
@@ -16,35 +17,111 @@ export class OrderService {
   static async createOrder(orderData, userId = null) {
     const { customer, shippingAddress, items, paymentMethod = 'COD', couponCode } = orderData;
 
-    if (!customer?.name || !customer?.email || !customer?.phone) {
+    // Enforce Cash on Delivery only
+    if (
+      paymentMethod &&
+      paymentMethod.toUpperCase() !== 'COD' &&
+      paymentMethod.toLowerCase() !== 'cash on delivery'
+    ) {
+      throw new ApiError(
+        400,
+        'Online payments are temporarily disabled. AgrivaFoods currently accepts Cash on Delivery (COD) only.'
+      );
+    }
+
+    const customerName = customer?.fullName || customer?.name;
+    if (!customerName || !customer?.email || !customer?.phone) {
       throw new ApiError(400, 'Customer name, email, and phone are required.');
     }
-    if (!shippingAddress?.street || !shippingAddress?.city || !shippingAddress?.state || !shippingAddress?.pincode) {
-      throw new ApiError(400, 'Complete shipping address is required.');
+
+    const street = shippingAddress?.address || shippingAddress?.street;
+    const pinCode = shippingAddress?.pinCode || shippingAddress?.pincode;
+    if (!street || !shippingAddress?.city || !shippingAddress?.state || !pinCode) {
+      throw new ApiError(400, 'Complete shipping address (address, city, state, pinCode) is required.');
     }
+
     if (!items || !Array.isArray(items) || items.length === 0) {
       throw new ApiError(400, 'Order must contain at least one product item.');
     }
 
-    // Calculate subtotal
+    // Authoritative pricing & stock verification
     let subtotal = 0;
-    const processedItems = items.map(item => {
-      const price = Number(item.price);
-      const quantity = Number(item.quantity) || 1;
-      const itemTotal = price * quantity;
-      subtotal += itemTotal;
-      return {
-        productSlug: item.productSlug,
-        productName: item.productName || item.name,
-        weight: item.weight,
-        price,
-        quantity,
-        itemTotal
-      };
-    });
+    const processedItems = [];
 
-    // Shipping fee rule: Free if subtotal >= 499, else 49
-    let shippingFee = subtotal >= 499 ? 0 : 49;
+    for (const item of items) {
+      const quantity = Math.max(1, parseInt(item.quantity, 10) || 1);
+      const productId = item.productId || item.id || item._id;
+      const productSlug = item.productSlug || item.slug;
+
+      let product = null;
+      if (checkDbConnection()) {
+        const query = productId ? { _id: productId } : { slug: productSlug };
+        product = await Product.findOne(query);
+      } else {
+        product = memoryStore.products?.find(
+          p => (productId && (p._id === productId || p.id === productId)) || (productSlug && p.slug === productSlug)
+        );
+      }
+
+      let trustedPrice = Number(item.price);
+      let variantSku = item.sku;
+      let variantWeight = item.weight || 'Standard';
+      let itemImage = item.image;
+
+      if (product) {
+        if (!product.isActive || product.status !== 'published') {
+          throw new ApiError(400, `Product '${product.name}' is currently unavailable for purchase.`);
+        }
+
+        const variants = product.variants || [];
+        let variant = null;
+        if (item.sku) {
+          variant = variants.find(v => v.sku === item.sku);
+        }
+        if (!variant && item.weight) {
+          variant = variants.find(v => v.weight?.toLowerCase() === item.weight.toLowerCase());
+        }
+        if (!variant && variants.length > 0) {
+          variant = variants[0];
+        }
+
+        if (variant) {
+          if (variant.inStock === false || variant.stock < quantity) {
+            throw new ApiError(
+              400,
+              `Insufficient stock for '${product.name} (${variant.weight})'. Requested: ${quantity}, Available: ${variant.stock || 0}.`
+            );
+          }
+          trustedPrice = Number(variant.price);
+          variantSku = variant.sku;
+          variantWeight = variant.weight;
+          itemImage = variant.image || (product.images && product.images[0]) || itemImage;
+        }
+      }
+
+      if (isNaN(trustedPrice) || trustedPrice < 0) {
+        throw new ApiError(400, `Invalid price configuration for product item.`);
+      }
+
+      const itemTotal = trustedPrice * quantity;
+      subtotal += itemTotal;
+
+      processedItems.push({
+        product: product ? (product._id || product.id) : null,
+        productSlug: product ? product.slug : productSlug,
+        name: product ? product.name : (item.productName || item.name),
+        productName: product ? product.name : (item.productName || item.name),
+        weight: variantWeight,
+        price: trustedPrice,
+        quantity,
+        sku: variantSku,
+        image: itemImage || '/assets/moringa-packaging.png',
+        itemTotal
+      });
+    }
+
+    // Shipping fee rule: Free if subtotal >= 499, else standard ₹49
+    const shippingFee = subtotal >= 499 ? 0 : 49;
 
     // Apply coupon if provided
     let discount = 0;
@@ -52,7 +129,7 @@ export class OrderService {
     if (couponCode) {
       try {
         validatedCoupon = await CouponService.validateCoupon(couponCode, subtotal);
-        discount = validatedCoupon.discountAmount;
+        discount = Number(validatedCoupon.discountAmount) || 0;
       } catch (err) {
         throw new ApiError(400, `Invalid coupon: ${err.message}`);
       }
@@ -64,32 +141,69 @@ export class OrderService {
     const orderPayload = {
       orderNumber,
       user: userId || null,
-      customer,
-      shippingAddress,
+      customer: {
+        fullName: customerName,
+        name: customerName,
+        email: customer.email.trim().toLowerCase(),
+        phone: customer.phone.trim()
+      },
+      shippingAddress: {
+        address: street,
+        street,
+        apartment: shippingAddress.apartment || '',
+        city: shippingAddress.city.trim(),
+        state: shippingAddress.state.trim(),
+        pinCode: String(pinCode).trim(),
+        pincode: String(pinCode).trim(),
+        country: shippingAddress.country || 'India'
+      },
       items: processedItems,
       subtotal,
+      shipping: shippingFee,
       shippingFee,
       discount,
-      couponCode: couponCode ? couponCode.toUpperCase() : null,
+      couponCode: validatedCoupon ? validatedCoupon.code : (couponCode ? couponCode.toUpperCase() : null),
       total,
-      paymentMethod,
-      paymentStatus: paymentMethod === 'COD' ? 'pending' : 'paid',
-      orderStatus: 'placed',
+      paymentMethod: 'COD',
+      paymentStatus: 'Pending', // Unpaid: Payment due upon delivery
+      orderStatus: 'Placed',
+      stockDeducted: true,
+      paidAt: null,
+      razorpayOrderId: null,
+      razorpayPaymentId: null,
+      razorpaySignature: null,
       adminNotificationsSent: {
         orderCreated: true,
-        paymentSuccess: paymentMethod !== 'COD',
+        paymentSuccess: false,
         paymentFailed: false
       },
       timeline: [
-        { status: 'placed', timestamp: new Date(), message: 'Order has been placed successfully.' }
+        {
+          status: 'Placed',
+          timestamp: new Date(),
+          message: 'Order placed successfully with Cash on Delivery (payment due upon arrival).'
+        }
       ]
     };
 
     let order = null;
     if (checkDbConnection()) {
       order = await Order.create(orderPayload);
-      if (couponCode) {
-        await CouponService.incrementUsage(couponCode);
+      if (validatedCoupon) {
+        await CouponService.incrementUsage(validatedCoupon.code);
+      }
+
+      // Deduct inventory stock for placed COD order
+      for (const item of processedItems) {
+        if (!item.product) continue;
+        const prod = await Product.findById(item.product);
+        if (!prod || !prod.variants) continue;
+        const v = prod.variants.find(varItem => varItem.sku === item.sku || varItem.weight === item.weight);
+        if (v) {
+          v.stock = Math.max(0, v.stock - item.quantity);
+          v.inStock = v.stock > 0;
+          await prod.save();
+        }
       }
     } else {
       order = {
@@ -98,8 +212,20 @@ export class OrderService {
         createdAt: new Date().toISOString()
       };
       memoryStore.orders.unshift(order);
-      if (couponCode) {
-        await CouponService.incrementUsage(couponCode);
+      if (validatedCoupon) {
+        await CouponService.incrementUsage(validatedCoupon.code);
+      }
+
+      // Memory store stock deduction
+      for (const item of processedItems) {
+        const prod = memoryStore.products?.find(p => p._id === item.product || p.id === item.product);
+        if (prod && prod.variants) {
+          const v = prod.variants.find(varItem => varItem.sku === item.sku || varItem.weight === item.weight);
+          if (v) {
+            v.stock = Math.max(0, v.stock - item.quantity);
+            v.inStock = v.stock > 0;
+          }
+        }
       }
     }
 

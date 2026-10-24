@@ -179,7 +179,7 @@ test('AgrivaFoods Backend API Suite', async (t) => {
           quantity: 2
         }
       ],
-      paymentMethod: 'UPI'
+      paymentMethod: 'COD'
     };
 
     const res = await makeRequest(server, {
@@ -194,6 +194,9 @@ test('AgrivaFoods Backend API Suite', async (t) => {
     assert.ok(res.body.data.orderNumber);
     assert.equal(res.body.data.subtotal, 598);
     assert.equal(res.body.data.shippingFee, 0); // Free shipping for >= 499
+    assert.equal(res.body.data.paymentMethod, 'COD');
+    assert.equal(res.body.data.paymentStatus, 'Pending');
+    assert.equal(res.body.data.orderStatus, 'Placed');
 
     createdOrderNumber = res.body.data.orderNumber;
 
@@ -204,6 +207,32 @@ test('AgrivaFoods Backend API Suite', async (t) => {
     });
     assert.equal(trackRes.status, 200);
     assert.equal(trackRes.body.data.orderNumber, createdOrderNumber);
+    assert.equal(trackRes.body.data.paymentMethod, 'COD');
+    assert.equal(trackRes.body.data.paymentStatus, 'Pending');
+
+    // Test: Non-COD payment method rejection
+    const nonCodRes = await makeRequest(server, {
+      method: 'POST',
+      path: '/api/orders',
+      body: { ...orderPayload, paymentMethod: 'Razorpay' }
+    });
+    assert.equal(nonCodRes.status, 400);
+
+    // Test: Obsolete Razorpay endpoints are safely disabled
+    const rzpOrderRes = await makeRequest(server, {
+      method: 'POST',
+      path: '/api/payment/create-order',
+      body: orderPayload
+    });
+    assert.equal(rzpOrderRes.status, 400);
+
+    const rzpConfigRes = await makeRequest(server, {
+      method: 'GET',
+      path: '/api/payment/config'
+    });
+    assert.equal(rzpConfigRes.status, 200);
+    assert.equal(rzpConfigRes.body.data.onlinePaymentEnabled, false);
+    assert.deepEqual(rzpConfigRes.body.data.paymentMethods, ['COD']);
   });
 
   await t.test('6. Customer Review Submission & Upvote', async () => {

@@ -557,8 +557,13 @@ ${env.CLIENT_URL}/admin/dashboard
       const shippingFee = order.shippingFee ?? order.shipping ?? 0;
       const discount = order.discount || 0;
       const total = order.total || 0;
-      const paymentMethod = order.paymentMethod || 'Razorpay';
+      const rawPaymentMethod = order.paymentMethod || 'COD';
+      const isCod = rawPaymentMethod.toUpperCase() === 'COD' || rawPaymentMethod.toLowerCase() === 'cash on delivery';
+      const paymentMethod = isCod ? 'Cash on Delivery (COD)' : rawPaymentMethod;
       const paymentStatus = order.paymentStatus || 'Pending';
+      const paymentStatusText = isCod
+        ? (paymentStatus.toLowerCase() === 'completed' || paymentStatus.toLowerCase() === 'paid' ? 'Completed (Collected)' : 'Pending (Pay on Delivery)')
+        : paymentStatus;
       const createdAt = order.placedAt || order.createdAt || new Date();
 
       const itemsHtml = items.map(item => `
@@ -593,7 +598,7 @@ ${env.CLIENT_URL}/admin/dashboard
               
               <div style="font-size: 12px; color: #6b7280; text-transform: uppercase; font-weight: 600;">Payment Info</div>
               <div style="font-size: 14px; color: #111827; margin: 4px 0;">Method: <strong>${escapeHtml(paymentMethod)}</strong></div>
-              <div style="font-size: 14px; color: #111827;">Status: <span style="font-weight: 600; color: ${paymentStatus === 'Completed' || paymentStatus === 'paid' ? '#166534' : '#d97706'};">${escapeHtml(paymentStatus)}</span></div>
+              <div style="font-size: 14px; color: #111827;">Status: <span style="font-weight: 600; color: ${paymentStatus === 'Completed' || paymentStatus === 'paid' ? '#166534' : '#d97706'};">${escapeHtml(paymentStatusText)}</span></div>
             </td>
             <td width="50%" valign="top" style="padding-left: 12px; border-left: 1px solid #e5e7eb;">
               <div style="font-size: 12px; color: #6b7280; text-transform: uppercase; font-weight: 600;">Customer Details</div>
@@ -640,19 +645,21 @@ ${env.CLIENT_URL}/admin/dashboard
           </tr>
           ` : ''}
           <tr>
-            <td align="right" style="padding: 8px 12px; font-weight: 700; font-size: 16px; color: #111827; border-top: 1px solid #e5e7eb;">Grand Total:</td>
+            <td align="right" style="padding: 8px 12px; font-weight: 700; font-size: 16px; color: #111827; border-top: 1px solid #e5e7eb;">${isCod ? 'Total Payable on Delivery:' : 'Grand Total:'}</td>
             <td align="right" style="padding: 8px 0; font-weight: 700; font-size: 16px; color: #166534; border-top: 1px solid #e5e7eb;">${formatINR(total)}</td>
           </tr>
         </table>
       `;
 
-      const subject = `[AgrivaFoods Admin] New Order Placed: #${orderNumber} (${formatINR(total)})`;
+      const subject = isCod
+        ? `[AgrivaFoods Admin] New COD Order Placed: #${orderNumber} (${formatINR(total)})`
+        : `[AgrivaFoods Admin] New Order Placed: #${orderNumber} (${formatINR(total)})`;
       const text = `
 === AGRIVAFOODS ADMIN: NEW ORDER PLACED ===
 
 Order Reference: #${orderNumber}
-Total Amount: ${formatINR(total)}
-Payment Method: ${paymentMethod} (${paymentStatus})
+Total Amount Due: ${formatINR(total)}
+Payment Method: ${paymentMethod} (${paymentStatusText})
 Placed At: ${formatDateTime(createdAt)}
 
 Customer Details:
